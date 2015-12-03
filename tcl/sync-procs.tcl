@@ -11,9 +11,7 @@ namespace eval auth::sync {}
 namespace eval auth::sync::job {}
 namespace eval auth::sync::get_doc {}
 namespace eval auth::sync::get_doc::http {}
-namespace eval auth::sync::get_doc::ldap {}
 namespace eval auth::sync::get_doc::file {}
-namespace eval auth::sync::get_doc::ldap {}
 namespace eval auth::sync::entry {}
 namespace eval auth::sync::process_doc {}
 namespace eval auth::sync::process_doc::ims {}
@@ -513,14 +511,16 @@ ad_proc -public auth::sync::purge_jobs {
 } {
     Purge jobs that are older than KeepBatchLogDays days.
 } {
-    if { ![exists_and_not_null num_days] } {
+    if { $num_days eq "" } {
         set num_days [parameter::get_from_package_key \
                           -parameter KeepBatchLogDays \
                           -package_key "acs-authentication" \
                           -default 0]
     }
     
-    validate_integer num_days $num_days
+    if {![string is integer -strict $num_days]} {
+	error "num_days ($num_days) has to be an integer"
+    }
 
     if { $num_days > 0 } { 
         db_dml purge_jobs {}
@@ -567,7 +567,6 @@ ad_proc -private auth::sync::GetDocument {
 } {
     Wrapper for the GetDocument operation of the auth_sync_retrieve service contract.
 } {
-    ns_log Notice "auth::sync::GetDocument: authoriy_id=$authority_id"
     set impl_id [auth::authority::get_element -authority_id $authority_id -element "get_doc_impl_id"]
 
     if { $impl_id eq "" } {
@@ -580,19 +579,12 @@ ad_proc -private auth::sync::GetDocument {
                         -authority_id $authority_id \
                         -impl_id $impl_id]
 
-
-    ns_log Notice "auth::sync::GetDocument: before acs_sc::invoke -contract auth_sync_retrieve -impl_id $impl_id -operation GetDocument -call_args $parameters"
     return [acs_sc::invoke \
                 -error \
                 -contract "auth_sync_retrieve" \
                 -impl_id $impl_id \
                 -operation GetDocument \
                 -call_args [list $parameters]]
-
-    ad_return_complaint 1 "1 - auth::sync::GetDocument: impl_id=$impl_id, parameters=$parameters"
-
-
-
 }
 
 ad_proc -private auth::sync::ProcessDocument {
@@ -722,7 +714,6 @@ ad_proc -private auth::sync::get_doc::http::GetDocument {
 } {
     Retrieve the document by HTTP
 } {
-    ns_log Notice "auth::sync::get_doc::http::GetDocument: parameters=$parameters"
     array set result {
         doc_status failed_to_conntect
         doc_message {}
@@ -732,7 +723,7 @@ ad_proc -private auth::sync::get_doc::http::GetDocument {
     
     array set param $parameters
     
-    if { ($param(SnapshotURL) ne "" && [string equal [clock format [clock seconds] -format "%d"] "01"]) || \
+    if { ($param(SnapshotURL) ne "" && [clock format [clock seconds] -format "%d"] eq "01") || \
              $param(IncrementalURL) eq "" } {
 
         # On the first day of the month, we get a snapshot
@@ -747,85 +738,13 @@ ad_proc -private auth::sync::get_doc::http::GetDocument {
         error "You must specify at least one URL to get."
     }
 
-    set result(document) [util_httpget $url]
+    set dict [util::http::get -url $url]
+    set result(document) [dict get $dict page]
 
     set result(doc_status) "ok"
 
     return [array get result]
 }
-
-
-
-
-
-
-
-
-
-#####
-#
-# auth::sync::get_doc::ldap namespace
-#
-#####
-
-ad_proc -private auth::sync::get_doc::ldap::register_impl {} {
-    Register this implementation
-} {
-    set spec {
-        contract_name "auth_sync_retrieve"
-        owner "acs-authentication"
-        name "LDAPGet"
-        pretty_name "LDAP GET"
-        aliases {
-            GetDocument auth::sync::get_doc::ldap::GetDocument
-            GetParameters auth::sync::get_doc::ldap::GetParameters
-        }
-    }
-
-    return [acs_sc::impl::new_from_spec -spec $spec]
-
-}
-
-ad_proc -private auth::sync::get_doc::ldap::unregister_impl {} {
-    Unregister this implementation
-} {
-    acs_sc::impl::delete -contract_name "auth_sync_retrieve" -impl_name "LDAPGet"
-}
-
-ad_proc -private auth::sync::get_doc::ldap::GetParameters {} {
-    Parameters for LDAP GetDocument implementation.
-} {
-    return {}
-}
-
-ad_proc -private auth::sync::get_doc::ldap::GetDocument { parameters } {
-    Retrieve the document by LDAP
-} {
-    ns_log Notice "auth::sync::get_doc::ldap::GetDocument: parameters=$parameters"
-    array set result {
-        doc_status failed_to_conntect
-        doc_message {}
-        document {}
-        snapshot_p f
-    }
-    
-    array set param $parameters
-
-    # Check 4 call levels upwards for an authority_id
-    upvar 3 authority_id authority_id
-    if {![info exists authority_id]} { set authority_id "" }
-
-    if {"" == $authority_id} {
-	ad_return_complaint 1 "Internal Error:<br>auth::sync::get_doc::ldap::GetDocument didn't find a valid authority_id.<br>&nbsp;"
-	ad_script_abort
-    }
-
-
-    set result(document) "!!!"
-    set result(doc_status) "ok"
-    return [array get result]
-}
-
 
 
 
@@ -882,7 +801,7 @@ ad_proc -private auth::sync::get_doc::file::GetDocument {
     
     array set param $parameters
     
-    if { ($param(SnapshotPath) ne "" && [string equal [clock format [clock seconds] -format "%d"] "01"]) || \
+    if { ($param(SnapshotPath) ne "" && [clock format [clock seconds] -format "%d"] eq "01") || \
              $param(IncrementalPath) eq "" } {
 
         # On the first day of the month, we get a snapshot
@@ -1068,68 +987,4 @@ ad_proc -public auth::sync::process_doc::ims::GetAcknowledgementDocument {
     append doc {</enterprise>} \n
     
     return $doc
-}
-
-#####
-#
-# auth::sync::get_doc::ldap namespace
-#
-#####
-
-ad_proc -private auth::sync::get_doc::ldap::register_impl {} {
-    Register this implementation
-} {
-    set spec {
-        contract_name "auth_sync_retrieve"
-        owner "acs-authentication"
-        name "LDAPGet"
-        pretty_name "LDAP GET"
-	aliases {
-            GetDocument auth::sync::get_doc::ldap::GetDocument
-            GetParameters auth::sync::get_doc::ldap::GetParameters
-	}
-    }
-    
-    return [acs_sc::impl::new_from_spec -spec $spec]
-    
-}
-
-ad_proc -private auth::sync::get_doc::ldap::unregister_impl {} {
-    Unregister this implementation
-} {
-    acs_sc::impl::delete -contract_name "auth_sync_retrieve" -impl_name "LDAPGet"
-}
-
-ad_proc -private auth::sync::get_doc::ldap::GetParameters {} {
-    Parameters for LDAP GetDocument implementation.
-} {
-    return {}
-}
-
-ad_proc -private auth::sync::get_doc::ldap::GetDocument { parameters } {
-    Retrieve the document by LDAP
-} {
-    ns_log Notice "auth::sync::get_doc::ldap::GetDocument: parameters=$parameters"
-    array set result {
-        doc_status failed_to_conntect
-	doc_message {}
-	document {}
-        snapshot_p f
-    }
-    
-    array set param $parameters
-    
-    # Check 4 call levels upwards for an authority_id
-    upvar 3 authority_id authority_id
-    if {![info exists authority_id]} { set authority_id "" }
-    
-    if {"" == $authority_id} {
-	ad_return_complaint 1 "Internal Error:<br>auth::sync::get_doc::ldap::GetDocument didn't find a valid authority_id.<br>&nbsp;"
-	ad_script_abort
-    }
-    
-    
-    set result(document) "!!!"
-    set result(doc_status) "ok"
-    return [array get result]
 }
