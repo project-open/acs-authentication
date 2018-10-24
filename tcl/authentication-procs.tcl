@@ -221,6 +221,15 @@ ad_proc -public auth::authenticate {
         set authority_id $user(authority_id)
         set username $user(username)
     } else {
+
+        # Check for email instead of username
+        set user_id_from_email [db_string email_p "select min(party_id) from parties where lower(email) = lower(trim(:username))" -default ""]
+        if {"" ne $user_id_from_email} {
+            ns_log Notice "auth::authenticate: found that username='$username' is actually a valid email for user_id=$user_id_from_email"
+            set username [db_string uname "select username from users where user_id = :user_id_from_email"]
+            ns_log Notice "auth::authenticate: New username='$username' for user_id=$user_id_from_email"
+        }
+
         # Default to local authority
         if { $authority_id eq "" } {
             set authority_id [auth::authority::local]
